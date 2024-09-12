@@ -10,4 +10,9 @@ export default defineConfig({
       },
     ],
   },
+  runner: {
+    startUrls: ['https://google.com/'],
+    openConsole: true,
+    openDevtools: true,
+  },
 });

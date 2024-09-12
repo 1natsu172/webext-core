@@ -1,8 +1,34 @@
 import { GenericMessenger, defineGenericMessanging } from './generic';
-import { NamespaceMessagingConfig, Message } from './types';
+import { NamespaceMessagingConfig, Message, WindowMessage } from './types';
 
-const REQUEST_TYPE = '@webext-core/messaging/window';
-const RESPONSE_TYPE = '@webext-core/messaging/window/response';
+type WindowMessageTypeMap = Record<
+  | 'REQUEST_TYPE'
+  | 'RESPONSE_TYPE'
+  | 'SHAKEHAND_START_TYPE'
+  | 'SHAKEHAND_COMPLETE_TYPE'
+  | 'TRANSFER_PORT_START_TYPE'
+  | 'TRANSFER_PORT_COMPLETE_TYPE',
+  string
+>;
+type WindowMessageType = (typeof windowMessageTypeMap)[keyof typeof windowMessageTypeMap];
+
+const windowMessageTypeMap = {
+  REQUEST_TYPE: '@webext-core/messaging/window',
+  RESPONSE_TYPE: '@webext-core/messaging/window/response',
+  SHAKEHAND_START_TYPE: '@webext-core/messaging/window/shakehand-start',
+  SHAKEHAND_COMPLETE_TYPE: '@webext-core/messaging/window/shakehand-complete',
+  TRANSFER_PORT_START_TYPE: '@webext-core/messaging/window/transfer-port-start',
+  TRANSFER_PORT_COMPLETE_TYPE: '@webext-core/messaging/window/transfer-port-complete',
+} as const satisfies WindowMessageTypeMap;
+
+const {
+  REQUEST_TYPE,
+  RESPONSE_TYPE,
+  TRANSFER_PORT_START_TYPE,
+  TRANSFER_PORT_COMPLETE_TYPE,
+  SHAKEHAND_START_TYPE,
+  SHAKEHAND_COMPLETE_TYPE,
+} = windowMessageTypeMap;
 
 /**
  * Configuration passed into `defineWindowMessaging`.
@@ -50,43 +76,221 @@ export function defineWindowMessaging<
   TProtocolMap extends Record<string, any> = Record<string, any>,
 >(config: WindowMessagingConfig): WindowMessenger<TProtocolMap> {
   const namespace = config.namespace;
+  const instanceId = crypto.randomUUID();
 
   let removeAdditionalListeners: Array<() => void> = [];
 
-  const sendWindowMessage = (message: Message<TProtocolMap, any>, targetOrigin?: string) =>
+  const senderChannels = new Map<keyof TProtocolMap, MessageChannel>();
+  const responderPorts = new Map<keyof TProtocolMap, MessagePort>();
+
+  function getSenderChannel<TType extends keyof TProtocolMap>(
+    type: TType,
+  ): { senderPort: MessagePort; responderPort: MessagePort } {
+    if (!senderChannels.has(type)) {
+      senderChannels.set(type, new MessageChannel());
+    }
+    const channel = senderChannels.get(type) as MessageChannel;
+    return { senderPort: channel.port1, responderPort: channel.port2 };
+  }
+
+  function getResponderPort<TType extends keyof TProtocolMap>(type: TType): MessagePort {
+    const port = responderPorts.get(type);
+    if (!port) {
+      throw Error(`[messaging/window] Internal error: not found ${String(type)} responderPort.`);
+    }
+    return port;
+  }
+
+  function cleanupPort<TType extends keyof TProtocolMap>(type: TType) {
+    senderChannels.get(type)?.port1.close();
+    senderChannels.get(type)?.port2.close();
+    responderPorts.get(type)?.close();
+    senderChannels.delete(type);
+    responderPorts.delete(type);
+  }
+
+  const transferPort = (message: Message<TProtocolMap, any>, targetOrigin?: string) => {
+    const { senderPort, responderPort } = getSenderChannel(message.type);
+    const removeCon = new AbortController();
+
+    return new Promise(res => {
+      let doneShakehand = false;
+      window.addEventListener(
+        'message',
+        (event: MessageEvent<WindowMessage<TProtocolMap, any, WindowMessageType>>) => {
+          if (
+            event.data.type === SHAKEHAND_COMPLETE_TYPE &&
+            event.data.namespace === namespace &&
+            event.data.message.type === message.type &&
+            event.data.instanceId !== instanceId
+          ) {
+            config.logger?.debug(
+              `[messaging/window] shakehand complete. {id=${event.data.message.id} type=${event.data.message.type}}`,
+              event,
+            );
+            doneShakehand = true;
+          }
+        },
+        { signal: removeCon.signal },
+      );
+      senderPort.addEventListener(
+        'message',
+        (event: MessageEvent<WindowMessage<TProtocolMap, any, WindowMessageType>>) => {
+          if (
+            event.data.type !== TRANSFER_PORT_COMPLETE_TYPE ||
+            event.data.namespace !== namespace
+          ) {
+            return;
+          }
+          res(event);
+          config.logger?.debug(
+            `[messaging/window] succeed port transfer. {id=${event.data.message.id} type=${event.data.message.type}}`,
+            event,
+          );
+          removeCon.abort('complete transfer responderPort.');
+        },
+        { signal: removeCon.signal },
+      );
+      senderPort.start();
+
+      const startShakehand = () => {
+        config.logger?.debug(
+          `[messaging/window] try shakehand. {id=${message.id} type=${message.type}}`,
+        );
+        window.postMessage(
+          {
+            type: SHAKEHAND_START_TYPE,
+            message,
+            senderOrigin: location.origin,
+            namespace,
+            instanceId,
+          } satisfies WindowMessage<TProtocolMap, any, WindowMessageType>,
+          targetOrigin ?? '*',
+        );
+      };
+      const transferPort = () => {
+        config.logger?.debug(
+          `[messaging/window] try port transfer. {id=${message.id} type=${message.type}}`,
+        );
+        window.postMessage(
+          {
+            type: TRANSFER_PORT_START_TYPE,
+            message,
+            senderOrigin: location.origin,
+            namespace,
+            instanceId,
+          } satisfies WindowMessage<TProtocolMap, any, WindowMessageType>,
+          targetOrigin ?? '*',
+          [responderPort],
+        );
+      };
+      const pollingId = setInterval(() => {
+        if (doneShakehand) {
+          clearInterval(pollingId);
+          transferPort();
+          return;
+        }
+        startShakehand();
+      }, 1e3);
+    });
+  };
+
+  const sendWindowMessage = (message: Message<TProtocolMap, any>) =>
     new Promise(res => {
       const responseListener = (event: MessageEvent) => {
+        config.logger?.debug('responseListener', message.id, responderPorts.get(message.type));
         if (event.data.type === RESPONSE_TYPE) {
           res(event.data.response);
           removeResponseListener();
         }
       };
-      const removeResponseListener = () => window.removeEventListener('message', responseListener);
+      const { senderPort } = getSenderChannel(message.type);
+      const removeResponseListener = () => {
+        cleanupPort(message.type);
+      };
       removeAdditionalListeners.push(removeResponseListener);
-      window.addEventListener('message', responseListener);
-      window.postMessage(
-        { type: REQUEST_TYPE, message, senderOrigin: location.origin, namespace },
-        targetOrigin ?? '*',
-      );
+      senderPort.onmessage = responseListener;
+      senderPort.postMessage({
+        type: REQUEST_TYPE,
+        message,
+        senderOrigin: location.origin,
+        namespace,
+        instanceId,
+      } satisfies WindowMessage<TProtocolMap, any, WindowMessageType>);
     });
 
   const messenger = defineGenericMessanging<TProtocolMap, {}, WindowSendMessageArgs>({
     ...config,
 
-    sendMessage(message, targetOrigin) {
-      return sendWindowMessage(message, targetOrigin);
+    async sendMessage(message, targetOrigin) {
+      await transferPort(message, targetOrigin);
+      return sendWindowMessage(message);
     },
 
     addRootListener(processMessage) {
-      const listener = async (event: MessageEvent) => {
-        if (event.data.type !== REQUEST_TYPE || event.data.namespace !== namespace) return;
+      const responseMessage = async (
+        event: MessageEvent<WindowMessage<TProtocolMap, any, WindowMessageType>>,
+      ) => {
+        if (
+          event.data.type !== REQUEST_TYPE ||
+          event.data.namespace !== namespace ||
+          !responderPorts.has(event.data.message.type)
+        ) {
+          return;
+        }
+
+        const responderPort = getResponderPort(event.data.message.type);
 
         const response = await processMessage(event.data.message);
-        window.postMessage({ type: RESPONSE_TYPE, response }, event.data.senderOrigin);
+        responderPort.postMessage({ type: RESPONSE_TYPE, response });
       };
 
-      window.addEventListener('message', listener);
-      return () => window.removeEventListener('message', listener);
+      const takeResponderPort = (
+        event: MessageEvent<WindowMessage<TProtocolMap, any, WindowMessageType>>,
+      ) => {
+        if (
+          event.data.namespace !== namespace ||
+          event.data.instanceId === instanceId ||
+          responderPorts.has(event.data.message.type)
+        ) {
+          return;
+        }
+
+        if (event.data.type === SHAKEHAND_START_TYPE) {
+          config.logger?.debug(
+            `[messaging/window] receive shakehand message. {id=${event.data.message.id} type=${event.data.message.type}}`,
+            event,
+          );
+          window.postMessage(
+            {
+              type: SHAKEHAND_COMPLETE_TYPE,
+              message: event.data.message,
+              senderOrigin: location.origin,
+              namespace,
+              instanceId,
+            } satisfies WindowMessage<TProtocolMap, any, WindowMessageType>,
+            event.origin ?? '*',
+          );
+        }
+
+        if (event.data.type === TRANSFER_PORT_START_TYPE) {
+          const responderPort = event.ports[0];
+          responderPorts.set(event.data.message.type, responderPort);
+
+          responderPort.onmessage = responseMessage;
+
+          responderPort.postMessage({
+            type: TRANSFER_PORT_COMPLETE_TYPE,
+            message: event.data.message,
+            senderOrigin: location.origin,
+            namespace,
+            instanceId,
+          } satisfies WindowMessage<TProtocolMap, any, WindowMessageType>);
+        }
+      };
+
+      window.addEventListener('message', takeResponderPort);
+      return () => window.removeEventListener('message', takeResponderPort);
     },
   });
 
@@ -96,6 +300,9 @@ export function defineWindowMessaging<
       messenger.removeAllListeners();
       removeAdditionalListeners.forEach(removeListener => removeListener());
       removeAdditionalListeners = [];
+      senderChannels.forEach((_, key) => {
+        cleanupPort(key);
+      });
     },
   };
 }

@@ -108,3 +108,18 @@ export interface Message<
    */
   timestamp: number;
 }
+
+/**
+ * Window message
+ */
+export interface WindowMessage<
+  TProtocolMap extends Record<string, any>,
+  TType extends keyof TProtocolMap,
+  WindowMessageType extends string,
+> {
+  type: WindowMessageType;
+  message: Message<TProtocolMap, TType>;
+  senderOrigin: string;
+  namespace: NamespaceMessagingConfig['namespace'];
+  instanceId: string
+}
