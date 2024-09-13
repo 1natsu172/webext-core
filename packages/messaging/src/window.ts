@@ -4,8 +4,8 @@ import { NamespaceMessagingConfig, Message, WindowMessage } from './types';
 type WindowMessageTypeMap = Record<
   | 'REQUEST_TYPE'
   | 'RESPONSE_TYPE'
-  | 'SHAKEHAND_START_TYPE'
-  | 'SHAKEHAND_COMPLETE_TYPE'
+  | 'HANDSHAKE_START_TYPE'
+  | 'HANDSHAKE_COMPLETE_TYPE'
   | 'TRANSFER_PORT_START_TYPE'
   | 'TRANSFER_PORT_COMPLETE_TYPE',
   string
@@ -15,8 +15,8 @@ type WindowMessageType = (typeof windowMessageTypeMap)[keyof typeof windowMessag
 const windowMessageTypeMap = {
   REQUEST_TYPE: '@webext-core/messaging/window',
   RESPONSE_TYPE: '@webext-core/messaging/window/response',
-  SHAKEHAND_START_TYPE: '@webext-core/messaging/window/shakehand-start',
-  SHAKEHAND_COMPLETE_TYPE: '@webext-core/messaging/window/shakehand-complete',
+  HANDSHAKE_START_TYPE: '@webext-core/messaging/window/handshake-start',
+  HANDSHAKE_COMPLETE_TYPE: '@webext-core/messaging/window/handshake-complete',
   TRANSFER_PORT_START_TYPE: '@webext-core/messaging/window/transfer-port-start',
   TRANSFER_PORT_COMPLETE_TYPE: '@webext-core/messaging/window/transfer-port-complete',
 } as const satisfies WindowMessageTypeMap;
@@ -26,8 +26,8 @@ const {
   RESPONSE_TYPE,
   TRANSFER_PORT_START_TYPE,
   TRANSFER_PORT_COMPLETE_TYPE,
-  SHAKEHAND_START_TYPE,
-  SHAKEHAND_COMPLETE_TYPE,
+  HANDSHAKE_START_TYPE,
+  HANDSHAKE_COMPLETE_TYPE,
 } = windowMessageTypeMap;
 
 /**
@@ -114,21 +114,21 @@ export function defineWindowMessaging<
     const removeCon = new AbortController();
 
     return new Promise(res => {
-      let doneShakehand = false;
+      let doneHandshake = false;
       window.addEventListener(
         'message',
         (event: MessageEvent<WindowMessage<TProtocolMap, any, WindowMessageType>>) => {
           if (
-            event.data.type === SHAKEHAND_COMPLETE_TYPE &&
+            event.data.type === HANDSHAKE_COMPLETE_TYPE &&
             event.data.namespace === namespace &&
             event.data.message.type === message.type &&
             event.data.instanceId !== instanceId
           ) {
             config.logger?.debug(
-              `[messaging/window] shakehand complete. {id=${event.data.message.id} type=${event.data.message.type}}`,
+              `[messaging/window] handshake complete. {id=${event.data.message.id} type=${event.data.message.type}}`,
               event,
             );
-            doneShakehand = true;
+            doneHandshake = true;
           }
         },
         { signal: removeCon.signal },
@@ -153,13 +153,13 @@ export function defineWindowMessaging<
       );
       senderPort.start();
 
-      const startShakehand = () => {
+      const startHandshake = () => {
         config.logger?.debug(
-          `[messaging/window] try shakehand. {id=${message.id} type=${message.type}}`,
+          `[messaging/window] try handshake. {id=${message.id} type=${message.type}}`,
         );
         window.postMessage(
           {
-            type: SHAKEHAND_START_TYPE,
+            type: HANDSHAKE_START_TYPE,
             message,
             senderOrigin: location.origin,
             namespace,
@@ -185,12 +185,12 @@ export function defineWindowMessaging<
         );
       };
       const pollingId = setInterval(() => {
-        if (doneShakehand) {
+        if (doneHandshake) {
           clearInterval(pollingId);
           transferPort();
           return;
         }
-        startShakehand();
+        startHandshake();
       }, 1e3);
     });
   };
@@ -256,14 +256,14 @@ export function defineWindowMessaging<
           return;
         }
 
-        if (event.data.type === SHAKEHAND_START_TYPE) {
+        if (event.data.type === HANDSHAKE_START_TYPE) {
           config.logger?.debug(
-            `[messaging/window] receive shakehand message. {id=${event.data.message.id} type=${event.data.message.type}}`,
+            `[messaging/window] receive handshake message. {id=${event.data.message.id} type=${event.data.message.type}}`,
             event,
           );
           window.postMessage(
             {
-              type: SHAKEHAND_COMPLETE_TYPE,
+              type: HANDSHAKE_COMPLETE_TYPE,
               message: event.data.message,
               senderOrigin: location.origin,
               namespace,
