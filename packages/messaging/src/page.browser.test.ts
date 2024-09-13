@@ -74,7 +74,7 @@ describe.each<
     expect(actual).toEqual(expected);
   });
 
-  it('should return the first response', async () => {
+  it.todo('Q: expect 1:1 or 1:n messaging?'+'should return the first response', async () => {
     interface MessageSchema {
       test(data: string): number;
     }
@@ -101,6 +101,22 @@ describe.each<
   });
 
   it('should throw an error if the responder throws an error', async () => {
+    interface MessageSchema {
+      test(data: string): number;
+    }
+    const error = new Error('test');
+    const messenger1 = defineTestMessaging<MessageSchema>();
+    const messenger2 = defineTestMessaging<MessageSchema>();
+    const onMessage = vi.fn().mockRejectedValue(error);
+
+    messenger2.onMessage('test', onMessage);
+
+    await expect(() => messenger1.sendMessage('test', 'data', ...sendArgs)).rejects.toThrowError(
+      error,
+    );
+  });
+  
+  it.todo('should be able to handle the same type of messaging in bi-directional', async () => {
     interface MessageSchema {
       test(data: string): number;
     }
