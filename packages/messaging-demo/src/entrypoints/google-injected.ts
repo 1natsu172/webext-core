@@ -8,7 +8,19 @@ export default defineUnlistedScript(async () => {
 
   googleMessaging.onMessage('ping2', event => {
     console.log('[google-injected.ts] Received2', event);
-    return 'pong2';
+    const props = [
+      {
+        "className": "ml-md",
+        onClick: () => {
+          console.log('THIS HANDLER CANNOT SERIALIZE2')
+        }
+      }
+    ]
+  
+    const ret = {reactProps: props};
+    console.log("return value will be", ret)
+  
+    return ret
   });
 
   googleMessaging.sendMessage('fromInjected', undefined).then(res => {

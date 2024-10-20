@@ -8,7 +8,20 @@ export default defineBackground(() => {
   });
   onMessage2('ping2', async ({ data }) => {
     await sleep(1000);
-    return data;
+    const props = [
+      {
+        "className": "ml-md",
+        onClick: () => {
+          console.log('THIS HANDLER CANNOT SERIALIZE')
+        }
+      }
+    ]
+  
+    const ret = {reactProps: props};
+    console.log("return value will be", ret)
+  
+    return ret
+    // return data;
   });
   onMessage2('throw', () => {
     throw Error('Example error');

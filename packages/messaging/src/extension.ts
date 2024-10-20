@@ -1,6 +1,7 @@
 import Browser, { Runtime } from 'webextension-polyfill';
 import { GenericMessenger, defineGenericMessanging } from './generic';
 import { BaseMessagingConfig } from './types';
+import { verifyMessageDetail } from './utils.js';
 
 /**
  * Configuration passed into `defineExtensionMessaging`.
@@ -63,6 +64,9 @@ export function defineExtensionMessaging<
 
       Browser.runtime.onMessage.addListener(listener);
       return () => Browser.runtime.onMessage.removeListener(listener);
+    },
+    prepareForTransfer(data) {
+        return verifyMessageDetail(data)
     },
   });
 }

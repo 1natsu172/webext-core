@@ -1,6 +1,7 @@
 import { uid } from 'uid';
 import { GenericMessenger, defineGenericMessanging } from './generic';
 import { NamespaceMessagingConfig } from './types';
+import { verifyMessageDetail } from './utils';
 
 const REQUEST_EVENT = '@webext-core/messaging/custom-events';
 const RESPONSE_EVENT = '@webext-core/messaging/custom-events/response';
@@ -113,6 +114,9 @@ export function defineCustomEventMessaging<
 
       window.addEventListener(REQUEST_EVENT, requestListener);
       return () => window.removeEventListener(REQUEST_EVENT, requestListener);
+    },
+    prepareForTransfer(data) {
+      return verifyMessageDetail(data);
     },
   });
 

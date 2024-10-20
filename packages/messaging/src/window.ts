@@ -1,6 +1,7 @@
 import { uid } from 'uid';
 import { GenericMessenger, defineGenericMessanging } from './generic';
 import { NamespaceMessagingConfig, Message } from './types';
+import { verifyMessageDetail } from './utils';
 
 const REQUEST_TYPE = '@webext-core/messaging/window';
 const RESPONSE_TYPE = '@webext-core/messaging/window/response';
@@ -105,6 +106,9 @@ export function defineWindowMessaging<
 
       window.addEventListener('message', listener);
       return () => window.removeEventListener('message', listener);
+    },
+    prepareForTransfer(data) {
+      return verifyMessageDetail(data);
     },
   });
 
